@@ -176,7 +176,7 @@ function RunDebugger(frame, repl = nothing, terminal = nothing; initial_continue
     end
     print_status(Base.pipe_writer(terminal), active_frame(state); force_lowered=state.lowered_status)
 
-    prompts = [panel]
+    prompts = Any[panel]
 
     if VERSION < v"1.13-"
         push!(prompts, search_prompt)
