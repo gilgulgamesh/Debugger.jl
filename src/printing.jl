@@ -94,6 +94,7 @@ function replace_function_with_symbol(expr)
     return expr
 end
 
+
 function print_next_expr(io::IO, frame::Frame)
     expr = pc_expr(frame)
     @assert expr !== nothing
@@ -129,8 +130,38 @@ function print_next_expr(io::IO, frame::Frame)
     expr = replace_function_with_symbol(expr)
     limit_expr = repr_limited(expr, MAX_BYTES_REPR[], print)
     print(io, highlight_code(limit_expr; context=io))
-    println(io)
+    res = pre_eval(frame, expr)
+    println(io, res)
 end
+
+FRAME = 0
+EXPR = Expr(:blank)
+VARS = Vector{JuliaInterpreter.Variable}[]
+PRE_EVAL = true
+EVAL_SAFELY = false
+
+function pre_eval(frame, expr)
+    global FRAME, EXPR, VARS, PRE_EVAL, EVAL_SAFELY
+    if !PRE_EVAL
+        return ""
+    end
+    expr_copy = deepcopy(expr)
+    FRAME = frame
+    VARS = JuliaInterpreter.locals(frame)
+    EXPR = expr
+    try
+        if EVAL_SAFELY
+            Threads.@spawn println(expr," -> ", Core.eval(moduleof(frame), expr_copy))
+            ""
+        else
+            " -> $(Core.eval(moduleof(frame), expr_copy))"
+        end
+    catch err
+        "$expr -> <preview unavailable: $(sprint(showerror, err))>"
+
+    end
+end
+
 
 function breakpoint_linenumbers(frame::Frame; lowered=false)
     framecode = frame.framecode
