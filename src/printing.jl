@@ -130,38 +130,72 @@ function print_next_expr(io::IO, frame::Frame)
     expr = replace_function_with_symbol(expr)
     limit_expr = repr_limited(expr, MAX_BYTES_REPR[], print)
     print(io, highlight_code(limit_expr; context=io))
-    res = pre_eval(frame, expr)
-    println(io, res)
+
+    global FRAME, EXPR, VARS
+    FRAME = frame
+    EXPR = expr
+    VARS = JuliaInterpreter.locals(frame)
+    res = getdetails()
+    println(io, '\n', res)
 end
 
+PRE_EVAL = true
 FRAME = 0
 EXPR = Expr(:blank)
 VARS = Vector{JuliaInterpreter.Variable}[]
-PRE_EVAL = true
-EVAL_SAFELY = false
-
-function pre_eval(frame, expr)
-    global FRAME, EXPR, VARS, PRE_EVAL, EVAL_SAFELY
-    if !PRE_EVAL
-        return ""
+const UNSAFE_CALLS::Vector{Symbol} = [:open, :write, :close, :read!, :rm, :mkdir, :mkpath,:redirect_stdout, :redirect_stderr, :run] #:append!
+const UNSAFE_TYPES::Vector{Type} = [IO, IOStream, Base.GenericIOBuffer, Channel, Task, Module]
+export FRAME, VARS, EXPR, PRE_EVAL, UNSAFE_CALLS
+function getdetails()
+    if occursin("#", string(EXPR))
+        return " ~> non-literal variable"
     end
-    expr_copy = deepcopy(expr)
-    FRAME = frame
-    VARS = JuliaInterpreter.locals(frame)
-    EXPR = expr
-    try
-        if EVAL_SAFELY
-            Threads.@spawn println(expr," -> ", Core.eval(moduleof(frame), expr_copy))
-            ""
-        else
-            " -> $(Core.eval(moduleof(frame), expr_copy))"
+
+    if EXPR isa Expr && EXPR.head == :call && EXPR.args[1] ∈ UNSAFE_CALLS
+        return " ~> unsafe call ($(EXPR.args[1]))"
+    end
+    if EXPR isa Expr
+        for a in EXPR.args
+            if a isa Union{UNSAFE_TYPES...}
+                return " ~> unsafe type ($a::$(typeof(a)))"
+            end
         end
-    catch err
-        "$expr -> <preview unavailable: $(sprint(showerror, err))>"
-
     end
+
+    expr_copy = deepcopy(EXPR)
+    t = Base.time()
+    result =  try
+        if !PRE_EVAL
+            "disabled"
+        end
+            Core.eval(moduleof(FRAME), expr_copy)
+    catch err
+        "<preview unavailable: $(sprint(showerror, err))>"
+    end
+    elapsed =  Base.time() - t
+    """Result: ~> $(result)
+    (depth: $(frame_depth(FRAME))) (time: $(elapsed)s)
+    variables: ($(format_vars(VARS)))"""
 end
 
+function format_vars(vars)
+    a = []
+    for v in vars
+        v.value isa Union{UNSAFE_TYPES...} ? marker = " $(typeof(v.value))!!" : marker = ""
+            push!(a, "$v$marker")
+        end
+    join(a, ", ")
+end
+
+function frame_depth(frame)
+    depth = 0
+    f = frame
+    while f !== nothing
+        depth += 1
+        f = f.caller
+    end
+    return depth
+end
 
 function breakpoint_linenumbers(frame::Frame; lowered=false)
     framecode = frame.framecode
